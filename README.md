@@ -1,4 +1,4 @@
 umvvm
 =====
 
-Micro Model-View View-Model framework in JS
+Micro Model-View View-Model framework in Javascript (BSD-Licensed)
