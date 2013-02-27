@@ -79,7 +79,7 @@ var mvvm = new function() {
             return value.value;
         }
 
-        // Function to update the dependents
+        // Function to update itself & the dependents
         value.update = function() {
             // Scan the list of DOM dependencies and update the elements
             for (var i = 0; i < value.domDeps.length; i++)
@@ -90,8 +90,8 @@ var mvvm = new function() {
                 value.fncDeps[i].update();
         }
 
-        // Adds a dependency for a DOM element
-        value.addDep = function(dep, key) {
+        // Adds a DOM element's dependency on this obs
+        value.addDOM = function(dep, key) {
             // We're adding a DOM dependency
             value.domDeps.push({   "element": dep, "key": key   });
 
@@ -100,8 +100,13 @@ var mvvm = new function() {
         }
 
         // Remove a dependency for a function
-        value.remDep = function(dep) {
-            value.fncDeps.splice(value.fncDeps.indexOf(dep), 1);
+        value.remDep = function(dep, key) {
+            // No key implies we're removing a function
+            if (key == null)
+                value.fncDeps.splice(value.fncDeps.indexOf(dep), 1);
+            // Otherwise it's a DOM node dependency
+            else
+                value.domDeps.splice(value.domDeps.indexOf({   "element": dep, "key": key   }));
         }
 
         // Function to set the value
@@ -123,28 +128,23 @@ var mvvm = new function() {
         value.deps    = [];     // Dependencies of this function
         value.fnc     = null;   // Function generator
 
-        // Function to update the dependents
-        value.update = function() {
-            if (value.fnc != null)
-                value.set(value.fnc);
-
-            value.base.update();
+        // Adds dependents of this function (ie: in recording mode)
+        value.addDep = function(dep) {
+            value.deps.push(dep);
         }
 
-        // Adds a dependency for a DOM element
-        value.addDep = function(dep, key) {
-            // One single argument means that we're adding a function
-            if (arguments.length == 1)
-                value.deps.push(dep);
-
-            // Two arguments means that we're adding a DOM dependency
-            else
-                value.base.addDep(dep, key);
+        // Function to update itself & the dependents
+        value.update = function() {
+            // Dependents could change the entire result; so we must re-evaluate
+            if (value.fnc)
+                value.set(value.fnc);
+                
+            value.base.update();
         }
 
         // Function to set the value
         value.set = function(val) {
-            // First remove all previous dependencies
+            // First remove all previous dependencies since they could change
             for (var i = 0; i < value.deps.length; i++)
                 value.deps[i].remDep(value);
             value.deps = [];
@@ -162,9 +162,27 @@ var mvvm = new function() {
         return value;
     })
 
+    
+    
+    // Observable objects
+    this.obsObject = function(initial) {
+        var value   = extend(this.obsProperty(initial));
+        value.deps  = [];     // Dependencies of this object
+
+        // Implement set & update
+
+        // Function to set the value
+        value.setTemplate = function(node, model) {
+            return mvvm.applyBindings(model, node);
+        }
+
+        return value;
+    }
+
 
 
     // Observable array
+    // FIXME: This is a poor man's implementation of the array.  It won't work with many things
     this.obsArray = function(initial) {
         value.anchors   = [];   // List of DOM anchor points for the template
         value.templates = [];   // List of templates
@@ -198,7 +216,7 @@ var mvvm = new function() {
                 for (var j = 0; j < template.length; j++) {
                     var ele = template[j].cloneNode(true);
 
-                    parsed = mvvm.applyBindings(value.value[i], ele, model);
+                    parsed = mvvm.applyBindings(value.value[i], ele, model, true);
                     value.value[i].parent = model;
                     node.appendChild(ele);
                 }
@@ -220,7 +238,7 @@ var mvvm = new function() {
                 for (var j = 0; j < value.templates[i].length; j++) {
                     var ele = value.templates[i][j].cloneNode(true);
 
-                    mvvm.applyBindings(model, ele, value.value[i].parent);
+                    mvvm.applyBindings(model, ele, value.value[i].parent, true);
                     value.anchors[i].appendChild(ele);
                 }
         }
@@ -233,7 +251,7 @@ var mvvm = new function() {
 
 
     // Parse the document datamodel and identyify the necessary bindings
-    this.applyBindings = function(data, ele, parent) {
+    this.applyBindings = function(data, ele, parent, parseParent) {
         data.parent = parent;
 
         // By default; we want to to work on the entire document
@@ -245,7 +263,7 @@ var mvvm = new function() {
 
         var elements = [];
 
-        if (ele.dataset.hasOwnProperty('bind'))
+        if (parseParent && ele.dataset.hasOwnProperty('bind'))
             elements.push(ele);
 
         for (var i = 0; i < nodelist.length; i++)
@@ -262,6 +280,12 @@ var mvvm = new function() {
                 if (binds[j] === 'foreach') {
                     var jump = data[binds[j + 1]].setTemplate(element, data);
                     i += jump
+                    
+                // Child object handling
+                } else if (binds[j] === 'with') {
+                    var model = typeof data[binds[j + 1]] === 'function' ? data[binds[j + 1]]() : data[binds[j + 1]];
+                    var jump = data[binds[j + 1]].setTemplate(element, model);
+                    i += jump;
                 }
 
                 // If this is an observable; append the dependency
@@ -299,8 +323,8 @@ var mvvm = new function() {
                         }
 
                         // If it's observable; add the dependency
-                        if (typeof model[attrib].addDep === 'function')
-                            model[attrib].addDep(target, prop);
+                        if (typeof model[attrib].addDOM === 'function')
+                            model[attrib].addDOM(target, prop);
 
                         // Otherwise; write in the static values
                         else {
@@ -322,6 +346,7 @@ var mvvm = new function() {
         "[object String]":      this.obsProperty,
         "[object Boolean]":     this.obsProperty,
         "[object Function]":    this.obsFunction,
-        "[object Array]":       this.obsArray
+        "[object Array]":       this.obsArray,
+        "[object Object]":      this.obsObject,
     };
 };
