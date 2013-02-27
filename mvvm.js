@@ -196,7 +196,7 @@ var mvvm = new function() {
             // Add each element in the DOM
             for (var i = 0; i < value.value.length; i++)
                 for (var j = 0; j < template.length; j++) {
-                    var ele = valutemplate[j].cloneNode(true);
+                    var ele = template[j].cloneNode(true);
 
                     parsed = mvvm.applyBindings(value.value[i], ele, model);
                     value.value[i].parent = model;
@@ -273,8 +273,8 @@ var mvvm = new function() {
                     var period = binds[j + 1].indexOf('.');
                     if (period != -1) {
                         var allowed = {
-                            "data": data,
-                            "parent": parent,
+                            "data":     data,
+                            "parent":   parent,
                         };
 
                         var name = binds[j + 1].substring(0, period);
@@ -289,15 +289,26 @@ var mvvm = new function() {
 
                     // Does the data exist in the data model?
                     if (model.hasOwnProperty(attrib)) {
+                        var target  = element;
+                        var prop   = binds[j];
+
+                        // Process any nested member definition
+                        while ((period = prop.indexOf('.')) != -1) {
+                            target = target[prop.substring(0, period)];
+                            prop   = prop.substring(period + 1);
+                        }
+
                         // If it's observable; add the dependency
                         if (typeof model[attrib].addDep === 'function')
-                            model[attrib].addDep(element, binds[j]);
+                            model[attrib].addDep(target, prop);
 
                         // Otherwise; write in the static values
-                        else if (typeof model[attrib] === 'function')
-                            element[binds[j]] = function() { return model[attrib](data, element); }
-                        else
-                            element[binds[j]] = model[attrib];
+                        else {
+                            if (typeof model[attrib] === 'function')
+                                target[prop] = function() { return model[attrib](data, element); }
+                            else
+                                target[prop] = model[attrib];
+                        }
                     }
                 }
             }
