@@ -1,3 +1,18 @@
+/*
+   Copyright © 2013 Christopher Tremblay. All Rights Reserved.
+
+   Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+   1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+
+   2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+   3. The name of the author may not be used to endorse or promote products derived from this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY [LICENSOR] "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+ */
+
 var mvvm = new function() {
     var record      = null;     // Variable to record into
 
@@ -7,22 +22,21 @@ var mvvm = new function() {
     this.obs = function(initial, tag) {
         var fnc = null;
 
-        if (initial != null) {
-            // If it's an object; look at it's type
-            if (obsfnc.hasOwnProperty(Object.prototype.toString.call(initial)))
-                fnc = obsfnc[Object.prototype.toString.call(initial)];
-            else
-                console.log('Unsupported observable type: ' + typeof initial);
+        // If it's an object; look at it's type
+        if ((initial != null) && (obsfnc.hasOwnProperty(Object.prototype.toString.call(initial)))) {
+            fnc = obsfnc[Object.prototype.toString.call(initial)];
+
+            var val = fnc.apply(this, arguments);
+
+            if (tag != null)
+                val.tag = tag;
+
+            return val;
 
         } else
             console.log("We currently don't support dynamic binding");
 
-        var val = fnc.apply(this, arguments);
-
-        if (tag != null)
-            val.tag = tag;
-
-        return val;
+        return null;
     }
 
 
@@ -163,6 +177,14 @@ var mvvm = new function() {
 
         value.setTemplate = function(node, model) {
             var template = [];
+            var parsed = 0;
+
+            // If this is an empty array; we still want to know how many binds are within it
+            if (!value.value.length) {
+                parsed += node.querySelectorAll('[data-bind]').length;
+
+                // Build the parent list
+            }
 
             // First; extract the template as a reference
             while (node.childElementCount > 0) {
@@ -172,10 +194,9 @@ var mvvm = new function() {
             }
 
             // Add each element in the DOM
-            var parsed = 0;
             for (var i = 0; i < value.value.length; i++)
                 for (var j = 0; j < template.length; j++) {
-                    var ele = template[j].cloneNode(true);
+                    var ele = valutemplate[j].cloneNode(true);
 
                     parsed = mvvm.applyBindings(value.value[i], ele, model);
                     value.value[i].parent = model;
@@ -220,17 +241,26 @@ var mvvm = new function() {
             ele = document.body;
 
         // Scan the document for bindings
-        var elements = ele.querySelectorAll('[data-bind]');
+        var nodelist = ele.querySelectorAll('[data-bind]');
+
+        var elements = [];
+
+        if (ele.dataset.hasOwnProperty('bind'))
+            elements.push(ele);
+
+        for (var i = 0; i < nodelist.length; i++)
+            elements.push(nodelist[i]);
 
         // For each elements        
         for (var i = 0; i < elements.length; i++) {
-            var binds = elements[i].dataset.bind.split(/[,:] */);
+            var element = elements[i];
+            var binds = element.dataset.bind.split(/[,:] */);
 
             // For each binds:data pair
             for (var j = 0; j < binds.length; j += 2) {
                 // Array handling requires special casing
                 if (binds[j] === 'foreach') {
-                    var jump = data[binds[j + 1]].setTemplate(elements[i], data);
+                    var jump = data[binds[j + 1]].setTemplate(element, data);
                     i += jump
                 }
 
@@ -251,6 +281,9 @@ var mvvm = new function() {
                         if (allowed.hasOwnProperty(name)) {
                             model   = allowed[name];
                             attrib  = binds[j + 1].substring(period + 1);
+
+                            if (model == null)
+                                console.log("model can't be null");
                         }
                     }
 
@@ -258,13 +291,13 @@ var mvvm = new function() {
                     if (model.hasOwnProperty(attrib)) {
                         // If it's observable; add the dependency
                         if (typeof model[attrib].addDep === 'function')
-                            model[attrib].addDep(elements[i], binds[j]);
+                            model[attrib].addDep(element, binds[j]);
 
                         // Otherwise; write in the static values
                         else if (typeof model[attrib] === 'function')
-                            elements[i][binds[j]] = function() { return model[attrib](data); }
+                            element[binds[j]] = function() { return model[attrib](data, element); }
                         else
-                            elements[i][binds[j]] = model[attrib];
+                            element[binds[j]] = model[attrib];
                     }
                 }
             }
