@@ -13,8 +13,11 @@
 
  */
 
+var man = null;
+
 var mvvm = new function() {
-    var record      = null;     // Variable to record into
+    var record          = null; // Variable to record into
+    var parentObjNode   = null; // Parent Object Node
 
 
 
@@ -81,17 +84,20 @@ var mvvm = new function() {
 
         // Function to update itself & the dependents
         value.update = function() {
-            // Scan the list of DOM dependencies and update the elements
+            // Scan the list of DOM dependencies and update the elements (downwards)
             for (var i = 0; i < value.domDeps.length; i++)
                 value.domDeps[i].element[value.domDeps[i].key] = value.value;
 
-            // Scan the list of functions and update them
+            // Scan the list of functions and update them (upwards)
             for (var i = 0; i < value.fncDeps.length; i++)
                 value.fncDeps[i].update();
         }
 
         // Adds a DOM element's dependency on this obs
         value.addDOM = function(dep, key) {
+            if (parentObjNode != null)
+                parentObjNode.deps.push([value, dep, key]);
+
             // We're adding a DOM dependency
             value.domDeps.push({   "element": dep, "key": key   });
 
@@ -133,28 +139,28 @@ var mvvm = new function() {
             value.deps.push(dep);
         }
 
-        // Function to update itself & the dependents
+        // Function to update itself & the dependents (downwards)
         value.update = function() {
-            // Dependents could change the entire result; so we must re-evaluate
+            // Update self
             if (value.fnc)
                 value.set(value.fnc);
-                
+
+            // Update dependents
             value.base.update();
         }
 
         // Function to set the value
         value.set = function(val) {
             // First remove all previous dependencies since they could change
-            for (var i = 0; i < value.deps.length; i++)
-                value.deps[i].remDep(value);
-            value.deps = [];
+            while (value.deps.length)
+                value.deps.pop().remDep(value);
 
             // Find the dependencies
-            var oldrec  = record;
+            var old     = record;
             record      = value;
             value.fnc   = val;
             value.base.set(arguments[0]());
-            record      = oldrec;
+            record      = old;
         };
 
         value.set(initial);
@@ -162,19 +168,121 @@ var mvvm = new function() {
         return value;
     })
 
-    
-    
+
+
     // Observable objects
     this.obsObject = function(initial) {
-        var value   = extend(this.obsProperty(initial));
-        value.deps  = [];     // Dependencies of this object
+        // List of nodes templated by this object
+        var nodes = []
 
-        // Implement set & update
+        // Function to return the value
+        function value() {
+            // An argument means that we are setting it
+            if (arguments.length != 0)
+                value.set(arguments[0]);
 
-        // Function to set the value
-        value.setTemplate = function(node, model) {
-            return mvvm.applyBindings(model, node);
+            return value.value;
         }
+
+        // Function to remove all dependencies given the owner
+        value.remDeps = function(owner, remObs) {
+            // Clean up the parent's node list before we nuke this node
+            if (remObs)
+                nodes.splice(nodes.indexOf(owner.obsNode), 1);
+
+            if (!owner.hasOwnProperty('deps')) {
+                if (owner.obsDeps.length > 0)
+                    console.log("That doesn't seem right!");
+                return;
+            }
+
+            var deps = owner.deps;
+
+            // First; remove the DOM dependencies
+            while (deps.length) {
+                var data = deps.pop();
+
+                data[0].remDep(data[1], data[2]);
+            }
+
+            delete owner.deps;
+
+            // Then parse & remove sub-obsObject dependencies
+            deps = owner.obsDeps;
+            while (deps.length) {
+                var obs     = deps.pop();
+                var anchors = owner.anchors;
+
+                for (var i = 0; i < anchors.length; i++)
+                    obs.remDeps(anchors[i].node, true);
+            }
+
+            delete owner.obsDeps;
+            delete owner.anchors;
+        }
+
+        // Sets the anchor point of this observable object
+        value.setTemplate = function(model, node, parentModel) {
+            /*if (!node.hasOwnProperty('anchors'))*/ {
+                // Initialize the tracking data
+                node.anchors    = [];
+                node.deps       = [];
+                node.obsDeps    = [];
+            }
+
+            var data = {
+                "node":         node,       // Node used to populate this template
+                "parent":       parentModel // Parent model of this node's model
+            };
+
+            node.obsNode = nodes;           // Pointer back to this node's bookeeper
+
+            // Store the set of children nodes (Seperated by parentObj)
+            if (parentObjNode) {
+                // Append the object to the parent's obsObject dependency list
+                parentObjNode.obsDeps.push(value);
+                parentObjNode.anchors.push(data);
+            }
+
+            nodes.push(data);
+
+            var old         = parentObjNode;
+            parentObjNode   = node;
+            var jump        = mvvm.applyBindings(model, node, parentModel);
+            parentObjNode   = old;
+
+            return jump
+        }
+
+        // Function to set the value (Downwards)
+        value.set = function(model) {
+            value.value     = model;
+
+            for (var i = 0; i < nodes.length; i++) {
+                // Remove all previous dependencies since they could change
+                var ele  = nodes[i];
+                var node = ele.node;
+
+                value.remDeps(node);
+
+                node.anchors    = [];
+                node.deps       = [];
+                node.obsDeps    = [];
+
+                var old         = parentObjNode;
+                parentObjNode   = node;
+                mvvm.applyBindings(model, node, ele);
+                parentObjNode   = old;
+            }
+        }
+
+        // Function to update itself & the dependents (downwards)
+        value.update = function() {
+            console.log("This function doesn't have an udpate function");
+//            mvvm.applyBindings();
+        }
+
+        value.set(initial)
 
         return value;
     }
@@ -193,7 +301,7 @@ var mvvm = new function() {
             return value.value;
         }
 
-        value.setTemplate = function(node, model) {
+        value.setTemplate = function(model, node) {
             var template = [];
             var parsed = 0;
 
@@ -277,15 +385,15 @@ var mvvm = new function() {
             // For each binds:data pair
             for (var j = 0; j < binds.length; j += 2) {
                 // Array handling requires special casing
-                if (binds[j] === 'foreach') {
-                    var jump = data[binds[j + 1]].setTemplate(element, data);
-                    i += jump
-                    
+                if (binds[j] === 'foreach')
+                    i += data[binds[j + 1]].setTemplate(data, element);
+
                 // Child object handling
-                } else if (binds[j] === 'with') {
+                else if (binds[j] === 'with') {
                     var model = typeof data[binds[j + 1]] === 'function' ? data[binds[j + 1]]() : data[binds[j + 1]];
-                    var jump = data[binds[j + 1]].setTemplate(element, model);
-                    i += jump;
+
+                    i += data[binds[j + 1]].setTemplate(model, element, data);
+//                    data[binds[j + 1]](model);
                 }
 
                 // If this is an observable; append the dependency
@@ -341,6 +449,7 @@ var mvvm = new function() {
         return elements.length;
     }
 
+    // Observer handler mapping
     var obsfnc = {
         "[object Number]":      this.obsProperty,
         "[object String]":      this.obsProperty,
